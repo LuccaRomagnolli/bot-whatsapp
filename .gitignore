@@ -1,0 +1,10 @@
+node_modules/
+.npm-cache/
+.env
+!.env.example
+.wwebjs_auth/
+.wwebjs_cache/
+leads_status.json
+warmup_start.json
+bot.log
+bot-error.log

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: whatsapp-bot-leads
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: TZ
+        value: America/Sao_Paulo
