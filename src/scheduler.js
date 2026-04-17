@@ -82,20 +82,53 @@ async function processBatch(client, config) {
 }
 
 function startSchedulers(client, config) {
-    const hours = [
-        config.BATCH_HOUR_1 || '9',
-        config.BATCH_HOUR_2 || '11',
-        config.BATCH_HOUR_3 || '16',
-        config.BATCH_HOUR_4 || '17'
+    const getBatchEnv = (key, fallback) => {
+        const value = config[key];
+        if (value === undefined) return fallback;
+        return String(value).trim();
+    };
+
+    const slots = [
+        getBatchEnv('BATCH_HOUR_1', '9'),
+        getBatchEnv('BATCH_HOUR_2', '11'),
+        getBatchEnv('BATCH_HOUR_3', '16'),
+        getBatchEnv('BATCH_HOUR_4', '17')
     ];
 
-    hours.forEach((hour, index) => {
-        const cronTime = `0 ${hour} * * *`;
+    slots.forEach((slot, index) => {
+        if (!slot || !String(slot).trim()) return;
+
+        const normalizedSlot = String(slot).trim();
+        let hour = null;
+        let minute = 0;
+
+        if (normalizedSlot.includes(':')) {
+            const parts = normalizedSlot.split(':');
+            if (parts.length !== 2) {
+                logger.warn(`Horário inválido em BATCH_HOUR_${index + 1}: "${normalizedSlot}". Use HH ou HH:mm.`);
+                return;
+            }
+            hour = parseInt(parts[0], 10);
+            minute = parseInt(parts[1], 10);
+        } else {
+            hour = parseInt(normalizedSlot, 10);
+        }
+
+        const isValidHour = Number.isInteger(hour) && hour >= 0 && hour <= 23;
+        const isValidMinute = Number.isInteger(minute) && minute >= 0 && minute <= 59;
+
+        if (!isValidHour || !isValidMinute) {
+            logger.warn(`Horário inválido em BATCH_HOUR_${index + 1}: "${normalizedSlot}".`);
+            return;
+        }
+
+        const cronTime = `${minute} ${hour} * * *`;
+        const slotLabel = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
         cron.schedule(cronTime, () => {
-            logger.info(`Triggering cron Lote ${index + 1} (${hour}:00)`);
+            logger.info(`Triggering cron Lote ${index + 1} (${slotLabel})`);
             processBatch(client, config);
         }, { timezone: config.TZ || 'America/Sao_Paulo' });
-        logger.info(`Cron agendado: Lote ${index + 1} às ${hour}:00`);
+        logger.info(`Cron agendado: Lote ${index + 1} às ${slotLabel}`);
     });
 }
 

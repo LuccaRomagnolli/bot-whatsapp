@@ -3,21 +3,45 @@ const Table = require('cli-table3');
 const statusTracker = require('./src/statusTracker');
 
 function getNextBatchTime() {
-    const hours = [
-        parseInt(process.env.BATCH_HOUR_1 || '9'),
-        parseInt(process.env.BATCH_HOUR_2 || '11'),
-        parseInt(process.env.BATCH_HOUR_3 || '16'),
-        parseInt(process.env.BATCH_HOUR_4 || '17')
-    ].sort((a, b) => a - b);
+    const getBatchEnv = (key, fallback) => {
+        const value = process.env[key];
+        if (value === undefined) return fallback;
+        return String(value).trim();
+    };
 
-    const currentHour = new Date().getHours();
-    
-    for (let h of hours) {
-        if (h > currentHour) {
-            return `${String(h).padStart(2, '0')}:00`;
+    const slots = [
+        getBatchEnv('BATCH_HOUR_1', '9'),
+        getBatchEnv('BATCH_HOUR_2', '11'),
+        getBatchEnv('BATCH_HOUR_3', '16'),
+        getBatchEnv('BATCH_HOUR_4', '17')
+    ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .map((value) => {
+            if (value.includes(':')) {
+                const [h, m] = value.split(':').map((part) => parseInt(part, 10));
+                if (Number.isInteger(h) && Number.isInteger(m)) return { h, m };
+                return null;
+            }
+            const h = parseInt(value, 10);
+            if (Number.isInteger(h)) return { h, m: 0 };
+            return null;
+        })
+        .filter((slot) => slot && slot.h >= 0 && slot.h <= 23 && slot.m >= 0 && slot.m <= 59)
+        .sort((a, b) => (a.h * 60 + a.m) - (b.h * 60 + b.m));
+
+    if (slots.length === 0) return 'Sem horários válidos';
+
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    for (const slot of slots) {
+        const slotMinutes = slot.h * 60 + slot.m;
+        if (slotMinutes > currentMinutes) {
+            return `${String(slot.h).padStart(2, '0')}:${String(slot.m).padStart(2, '0')}`;
         }
     }
-    return `${String(hours[0]).padStart(2, '0')}:00 (Amanhã)`;
+    return `${String(slots[0].h).padStart(2, '0')}:${String(slots[0].m).padStart(2, '0')} (Amanhã)`;
 }
 
 function showDashboard() {
