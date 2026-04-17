@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel Bot WhatsApp</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="overline">Painel interativo</p>
+        <h1>WhatsApp Broadcast Console</h1>
+        <p class="subtitle">Controle refinado de disparos com monitoramento em tempo real.</p>
+      </div>
+      <div class="status-pill" id="botState">Carregando...</div>
+    </header>
+
+    <section class="grid stats-grid" id="statsGrid"></section>
+
+    <section class="grid actions-grid">
+      <article class="card">
+        <h2>Controles do Bot</h2>
+        <div class="button-row">
+          <button id="startBtn">Iniciar</button>
+          <button id="stopBtn" class="ghost">Parar</button>
+          <button id="triggerBtn" class="ghost">Disparar Lote Agora</button>
+        </div>
+        <p class="hint">Use apenas uma instância por sessão para evitar bloqueio do navegador.</p>
+        <hr class="divider" />
+        <h2>Horários de Disparo</h2>
+        <p class="hint">Defina até 4 horários diários no formato HH:mm.</p>
+        <div class="schedule-grid">
+          <input id="slot1" type="time" />
+          <input id="slot2" type="time" />
+          <input id="slot3" type="time" />
+          <input id="slot4" type="time" />
+        </div>
+        <button id="saveScheduleBtn" class="ghost">Salvar Horários</button>
+      </article>
+
+      <article class="card">
+        <h2>Adicionar Leads</h2>
+        <p class="hint">Um por linha no formato: Nome,5561999999999</p>
+        <textarea id="leadsInput" rows="7" placeholder="Ana,5561999999999&#10;Carlos,5561988888888"></textarea>
+        <div class="button-row">
+          <button id="saveLeadsBtn">Salvar Leads</button>
+          <label class="upload-label" for="csvFileInput">Anexar lista CSV</label>
+          <input id="csvFileInput" type="file" accept=".csv,text/csv" />
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Leads Cadastrados</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Número</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="leadsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="feedback" id="feedback"></p>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>

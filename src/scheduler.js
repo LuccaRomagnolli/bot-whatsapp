@@ -4,6 +4,7 @@ const statusTracker = require('./statusTracker');
 const { sendFirstMessage } = require('./messenger');
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
+const scheduledTasks = [];
 
 // Algoritmo de Fisher-Yates para embaralhar o array
 function shuffleArray(array) {
@@ -124,12 +125,22 @@ function startSchedulers(client, config) {
 
         const cronTime = `${minute} ${hour} * * *`;
         const slotLabel = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-        cron.schedule(cronTime, () => {
+        const task = cron.schedule(cronTime, () => {
             logger.info(`Triggering cron Lote ${index + 1} (${slotLabel})`);
             processBatch(client, config);
         }, { timezone: config.TZ || 'America/Sao_Paulo' });
+        scheduledTasks.push(task);
         logger.info(`Cron agendado: Lote ${index + 1} às ${slotLabel}`);
     });
 }
 
-module.exports = { startSchedulers };
+function stopSchedulers() {
+    while (scheduledTasks.length > 0) {
+        const task = scheduledTasks.pop();
+        task.stop();
+        task.destroy();
+    }
+    logger.info('Todos os agendamentos foram interrompidos.');
+}
+
+module.exports = { startSchedulers, stopSchedulers, processBatch };

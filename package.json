@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "status": "node status.js"
+    "status": "node status.js",
+    "web": "node web.js"
   },
   "engines": {
     "node": ">=18"
@@ -14,6 +15,7 @@
     "cli-table3": "^0.6.5",
     "csv-parser": "^3.2.0",
     "dotenv": "^16.6.1",
+    "express": "^4.21.2",
     "node-cron": "^4.2.1",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.34.1",

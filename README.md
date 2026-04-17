@@ -31,6 +31,19 @@ npm install
 npm start
 ```
 
+## Painel web interativo
+
+```bash
+npm run web
+```
+
+Abra `http://localhost:3000` para:
+- iniciar/parar o bot
+- disparar lote manual
+- cadastrar leads pela interface
+- selecionar horários de disparo (até 4 por dia)
+- acompanhar métricas em tempo real
+
 Comandos uteis:
 
 ```bash
