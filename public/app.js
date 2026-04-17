@@ -4,6 +4,10 @@ const leadsTableBody = document.getElementById('leadsTableBody');
 const feedback = document.getElementById('feedback');
 const leadsInput = document.getElementById('leadsInput');
 const csvFileInput = document.getElementById('csvFileInput');
+const waStatusText = document.getElementById('waStatusText');
+const waPhoneText = document.getElementById('waPhoneText');
+const waQrImage = document.getElementById('waQrImage');
+const waQrHint = document.getElementById('waQrHint');
 const scheduleInputs = [
   document.getElementById('slot1'),
   document.getElementById('slot2'),
@@ -55,6 +59,52 @@ function renderStats(summary) {
   });
 }
 
+function formatPhone(number) {
+  if (!number) return '';
+  const digits = String(number).replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 2) return `+${digits}`;
+  return `+${digits.slice(0, 2)} ${digits.slice(2)}`;
+}
+
+function getConnectionLabel(status) {
+  if (status === 'connected') return 'Conectado';
+  if (status === 'qr_ready') return 'Aguardando leitura do QR Code';
+  if (status === 'connecting') return 'Conectando...';
+  if (status === 'error') return 'Erro na autenticação';
+  return 'Desconectado';
+}
+
+function renderWhatsApp(connection = {}) {
+  const statusLabel = getConnectionLabel(connection.status);
+  waStatusText.textContent = `Status da conexão: ${statusLabel}`;
+
+  if (connection.phoneNumber) {
+    waPhoneText.textContent = `Número conectado: ${formatPhone(connection.phoneNumber)}`;
+  } else {
+    waPhoneText.textContent = 'Nenhum número conectado.';
+  }
+
+  if (connection.qrDataUrl) {
+    waQrImage.src = connection.qrDataUrl;
+    waQrImage.style.display = 'block';
+    waQrHint.textContent = 'Escaneie este QR Code com o WhatsApp no seu celular.';
+  } else {
+    waQrImage.removeAttribute('src');
+    waQrImage.style.display = 'none';
+
+    if (connection.status === 'connected') {
+      waQrHint.textContent = 'Conta autenticada. Você já pode iniciar o bot.';
+    } else if (connection.status === 'connecting') {
+      waQrHint.textContent = 'Gerando QR Code... aguarde alguns segundos.';
+    } else if (connection.status === 'error') {
+      waQrHint.textContent = connection.lastError || 'Falha ao autenticar. Tente conectar novamente.';
+    } else {
+      waQrHint.textContent = 'Clique em "Conectar por QR" para gerar o código.';
+    }
+  }
+}
+
 function renderLeads(leads) {
   if (!leads.length) {
     leadsTableBody.innerHTML = '<tr><td colspan="3">Nenhum lead cadastrado.</td></tr>';
@@ -75,6 +125,7 @@ async function refresh() {
   try {
     const summary = await api('/api/summary');
     renderStats(summary);
+    renderWhatsApp(summary.whatsapp || {});
     renderLeads(summary.leads || []);
   } catch (error) {
     setFeedback(error.message, true);
@@ -94,6 +145,12 @@ async function postAction(path, successMessage) {
 document.getElementById('startBtn').addEventListener('click', () => postAction('/api/start', 'Bot iniciado.'));
 document.getElementById('stopBtn').addEventListener('click', () => postAction('/api/stop', 'Bot parado.'));
 document.getElementById('triggerBtn').addEventListener('click', () => postAction('/api/trigger', 'Lote manual enviado.'));
+document.getElementById('connectWaBtn').addEventListener('click', () => postAction('/api/whatsapp/connect', 'Conexão iniciada.'));
+document.getElementById('resetWaBtn').addEventListener('click', async () => {
+  const confirmReset = window.confirm('Isso vai desconectar e remover o número atual. Deseja continuar?');
+  if (!confirmReset) return;
+  await postAction('/api/whatsapp/reset', 'Número removido com sucesso.');
+});
 document.getElementById('saveScheduleBtn').addEventListener('click', async () => {
   const slots = scheduleInputs.map((input) => input.value || '');
   try {

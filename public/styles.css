@@ -86,7 +86,29 @@ button.ghost {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
+button.danger {
+  border-color: rgba(221, 107, 122, 0.45);
+  color: #ffd6dc;
+}
 button:hover { filter: brightness(1.07); }
+
+.qr-wrap {
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  padding: .8rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+#waQrImage {
+  display: none;
+  width: 220px;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  margin: 0 auto .6rem;
+  background: #fff;
+  padding: .4rem;
+}
 
 .upload-label {
   display: inline-flex;

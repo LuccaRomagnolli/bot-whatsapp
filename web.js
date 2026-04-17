@@ -4,7 +4,8 @@ const path = require('path');
 const express = require('express');
 const logger = require('./src/logger');
 const { processCSV } = require('./src/csvReader');
-const { startBot, stopBot, triggerBatchNow, applyScheduleChanges, getSummary } = require('./src/botService');
+const { startBot, stopBot, resetWhatsAppSession, triggerBatchNow, applyScheduleChanges, getSummary } = require('./src/botService');
+const { startClientConnection, getConnectionStatus } = require('./src/client');
 
 const app = express();
 const PORT = parseInt(process.env.WEB_PORT, 10) || 3000;
@@ -16,6 +17,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/summary', (_req, res) => {
     res.json(getSummary(process.env));
+});
+
+app.get('/api/whatsapp/status', (_req, res) => {
+    res.json(getConnectionStatus());
 });
 
 function updateEnvValues(values) {
@@ -38,10 +43,45 @@ function updateEnvValues(values) {
 
 app.post('/api/start', async (_req, res) => {
     try {
+        const connection = getConnectionStatus();
+        if (connection.status !== 'connected') {
+            startClientConnection();
+            return res.status(400).json({
+                error: 'Conecte o WhatsApp antes de iniciar o bot. Use o QR Code na seção "Conta WhatsApp".'
+            });
+        }
+
         const result = await startBot(process.env);
         res.json(result);
     } catch (error) {
         res.status(400).json({ error: error.message });
+    }
+});
+
+app.post('/api/whatsapp/connect', (_req, res) => {
+    try {
+        const connection = startClientConnection();
+
+        if (connection.status === 'connected') {
+            return res.json({ ok: true, message: 'Conta já conectada.', connection });
+        }
+
+        return res.json({
+            ok: true,
+            message: 'Conexão iniciada. Escaneie o QR Code exibido no painel para autenticar.',
+            connection
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/whatsapp/reset', async (_req, res) => {
+    try {
+        const result = await resetWhatsAppSession();
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 

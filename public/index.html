@@ -21,6 +21,18 @@
 
     <section class="grid actions-grid">
       <article class="card">
+        <h2>Conta WhatsApp</h2>
+        <p class="hint" id="waStatusText">Status da conexão: verificando...</p>
+        <p class="hint" id="waPhoneText">Nenhum número conectado.</p>
+        <div class="qr-wrap" id="qrWrap">
+          <img id="waQrImage" alt="QR Code para conexão do WhatsApp" />
+          <p class="hint" id="waQrHint">Clique em "Conectar por QR" para gerar o código.</p>
+        </div>
+        <div class="button-row">
+          <button id="connectWaBtn">Conectar por QR</button>
+          <button id="resetWaBtn" class="ghost danger">Trocar Número</button>
+        </div>
+        <hr class="divider" />
         <h2>Controles do Bot</h2>
         <div class="button-row">
           <button id="startBtn">Iniciar</button>

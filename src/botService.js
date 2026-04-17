@@ -1,7 +1,7 @@
 const logger = require('./logger');
 const statusTracker = require('./statusTracker');
 const { processCSV } = require('./csvReader');
-const { initializeClient } = require('./client');
+const { initializeClient, disconnectClient, getConnectionStatus } = require('./client');
 const { setupResponseHandler } = require('./responseHandler');
 const { startSchedulers, stopSchedulers, processBatch } = require('./scheduler');
 
@@ -39,12 +39,19 @@ async function startBot(config = process.env) {
 
 async function stopBot() {
     stopSchedulers();
-    if (client) {
-        await client.destroy();
-        client = null;
-    }
+    await disconnectClient();
+    client = null;
     running = false;
     return { running: false, message: 'Bot interrompido com sucesso.' };
+}
+
+async function resetWhatsAppSession() {
+    stopSchedulers();
+    await disconnectClient({ removeSession: true });
+    client = null;
+    running = false;
+    starting = false;
+    return { ok: true, message: 'Número removido. Escaneie um novo QR Code para conectar outra conta.' };
 }
 
 async function triggerBatchNow(config = process.env) {
@@ -71,6 +78,7 @@ function getSummary(config = process.env) {
 
     return {
         bot: { running, starting },
+        whatsapp: getConnectionStatus(),
         schedule: {
             slot1: String(config.BATCH_HOUR_1 || ''),
             slot2: String(config.BATCH_HOUR_2 || ''),
@@ -94,6 +102,7 @@ function getSummary(config = process.env) {
 module.exports = {
     startBot,
     stopBot,
+    resetWhatsAppSession,
     triggerBatchNow,
     applyScheduleChanges,
     getSummary
