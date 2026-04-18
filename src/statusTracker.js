@@ -64,6 +64,21 @@ class StatusTracker {
         return Object.values(this.statusData);
     }
 
+    removeLead(numero) {
+        const key = String(numero || '');
+        if (!this.statusData[key]) return false;
+        delete this.statusData[key];
+        this.saveStatus();
+        return true;
+    }
+
+    clearLeads() {
+        const count = Object.keys(this.statusData).length;
+        this.statusData = {};
+        this.saveStatus();
+        return count;
+    }
+
     getPendingLeads() {
         return Object.values(this.statusData).filter(l => l.status === 'pendente');
     }

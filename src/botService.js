@@ -1,13 +1,39 @@
 const logger = require('./logger');
 const statusTracker = require('./statusTracker');
 const { processCSV } = require('./csvReader');
-const { initializeClient, disconnectClient, getConnectionStatus } = require('./client');
+const { initializeClient, disconnectClient, getConnectionStatus, subscribeClientReady } = require('./client');
 const { setupResponseHandler } = require('./responseHandler');
 const { startSchedulers, stopSchedulers, processBatch } = require('./scheduler');
 
 let client = null;
 let running = false;
 let starting = false;
+let activeConfig = process.env;
+let unsubscribeClientReady = null;
+const MAX_BATCH_SLOTS = 12;
+const RESPONSE_HANDLER_ATTACHED = Symbol('responseHandlerAttached');
+
+function normalizeTimeSlot(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const match = raw.match(/^(\d{1,2}):([0-5]\d)$/);
+    if (!match) return '';
+
+    const hour = parseInt(match[1], 10);
+    if (Number.isNaN(hour) || hour < 0 || hour > 23) return '';
+
+    return `${String(hour).padStart(2, '0')}:${match[2]}`;
+}
+
+function readIntInRange(value, fallback, min, max) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isInteger(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+}
+
+function getBatchCount(config = process.env) {
+    return readIntInRange(config.BATCH_COUNT, 4, 1, MAX_BATCH_SLOTS);
+}
 
 function validateConfig(config) {
     const requiredVars = ['SECOND_MESSAGE'];
@@ -17,18 +43,42 @@ function validateConfig(config) {
     }
 }
 
+function ensureRuntimeBindings(targetClient, config) {
+    if (!targetClient) return;
+
+    if (!targetClient[RESPONSE_HANDLER_ATTACHED]) {
+        setupResponseHandler(targetClient, config);
+        targetClient[RESPONSE_HANDLER_ATTACHED] = true;
+    }
+
+    stopSchedulers();
+    startSchedulers(targetClient, config);
+}
+
+function ensureClientReadySubscription() {
+    if (unsubscribeClientReady) return;
+
+    unsubscribeClientReady = subscribeClientReady((nextClient) => {
+        client = nextClient;
+        if (!running) return;
+        ensureRuntimeBindings(nextClient, activeConfig);
+        logger.info('Cliente reconectado. Listeners e agendamentos reaplicados.');
+    });
+}
+
 async function startBot(config = process.env) {
     if (running) return { running: true, message: 'Bot já está em execução.' };
     if (starting) return { running: false, message: 'Inicialização já em andamento.' };
 
     try {
         starting = true;
+        activeConfig = config;
+        ensureClientReadySubscription();
         validateConfig(config);
         logger.info('Iniciando Bot de WhatsApp...');
         await processCSV();
         client = await initializeClient();
-        setupResponseHandler(client, config);
-        startSchedulers(client, config);
+        ensureRuntimeBindings(client, config);
         running = true;
         logger.info('Sistema rodando em background. Aguardando horários agendados...');
         return { running: true, message: 'Bot iniciado com sucesso.' };
@@ -55,15 +105,20 @@ async function resetWhatsAppSession() {
 }
 
 async function triggerBatchNow(config = process.env) {
-    if (!running || !client) throw new Error('Bot não está em execução.');
-    await processBatch(client, config);
+    if (!running) throw new Error('Bot não está em execução.');
+    const activeClient = await initializeClient();
+    client = activeClient;
+    await processBatch(activeClient, config);
     return { ok: true, message: 'Lote manual executado.' };
 }
 
 function applyScheduleChanges(config = process.env) {
+    activeConfig = config;
+
     if (!running || !client) {
         return { ok: true, message: 'Horários salvos. Serão aplicados quando o bot iniciar.' };
     }
+
     stopSchedulers();
     startSchedulers(client, config);
     return { ok: true, message: 'Horários atualizados e aplicados no bot em execução.' };
@@ -76,14 +131,25 @@ function getSummary(config = process.env) {
         if (stats[lead.status] !== undefined) stats[lead.status] += 1;
     });
 
+    const batchCount = getBatchCount(config);
+    const scheduleSlots = Array.from({ length: batchCount }, (_slot, index) =>
+        normalizeTimeSlot(config[`BATCH_HOUR_${index + 1}`])
+    );
+    const responseReplyMinMs = readIntInRange(config.RESPONSE_REPLY_MIN_MS, 8000, 0, 3600000);
+
     return {
         bot: { running, starting },
         whatsapp: getConnectionStatus(),
+        config: {
+            secondMessage: String(config.SECOND_MESSAGE || ''),
+            batchSize: readIntInRange(config.BATCH_SIZE, 20, 1, 1000),
+            batchCount,
+            dailyLimit: readIntInRange(config.DAILY_LIMIT, 80, 1, 100000),
+            responseReplyDelaySeconds: Math.floor(responseReplyMinMs / 1000)
+        },
         schedule: {
-            slot1: String(config.BATCH_HOUR_1 || ''),
-            slot2: String(config.BATCH_HOUR_2 || ''),
-            slot3: String(config.BATCH_HOUR_3 || ''),
-            slot4: String(config.BATCH_HOUR_4 || '')
+            batchCount,
+            slots: scheduleSlots
         },
         totals: {
             leads: leads.length,

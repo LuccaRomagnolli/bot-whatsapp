@@ -11,8 +11,8 @@
     <header class="hero">
       <div>
         <p class="overline">Painel interativo</p>
-        <h1>WhatsApp Broadcast Console</h1>
-        <p class="subtitle">Controle refinado de disparos com monitoramento em tempo real.</p>
+        <h1>Bot de Disparos WhatsApp</h1>
+        <p class="subtitle">Controle e disparos em tempo real.</p>
       </div>
       <div class="status-pill" id="botState">Carregando...</div>
     </header>
@@ -41,15 +41,37 @@
         </div>
         <p class="hint">Use apenas uma instância por sessão para evitar bloqueio do navegador.</p>
         <hr class="divider" />
-        <h2>Horários de Disparo</h2>
-        <p class="hint">Defina até 4 horários diários no formato HH:mm.</p>
-        <div class="schedule-grid">
-          <input id="slot1" type="time" />
-          <input id="slot2" type="time" />
-          <input id="slot3" type="time" />
-          <input id="slot4" type="time" />
+        <h2>Configurações de Disparo</h2>
+        <p class="hint">Ajuste o volume e velocidade dos disparos.</p>
+        <div class="config-grid">
+          <label class="field">
+            <span>Tamanho do lote</span>
+            <input id="batchSizeInput" type="number" min="1" max="1000" />
+          </label>
+          <label class="field">
+            <span>Número de lotes</span>
+            <input id="batchCountInput" type="number" min="1" max="12" />
+          </label>
+          <label class="field">
+            <span>Limite diário</span>
+            <input id="dailyLimitInput" type="number" min="1" max="100000" />
+          </label>
+          <label class="field">
+            <span>Delay para responder a primeira mensagem (segundos)</span>
+            <input id="replyDelayInput" type="number" min="0" max="3600" />
+          </label>
         </div>
+        <button id="saveSettingsBtn" class="ghost">Salvar Configurações</button>
+        <hr class="divider" />
+        <h2>Horários de Disparo</h2>
+        <p class="hint">Defina os horários no formato HH:mm. A quantidade de caixas segue o número de lotes.</p>
+        <div class="schedule-grid" id="scheduleGrid"></div>
         <button id="saveScheduleBtn" class="ghost">Salvar Horários</button>
+        <hr class="divider" />
+        <h2>Segunda Mensagem</h2>
+        <p class="hint">Mensagem enviada automaticamente quando o lead responder.</p>
+        <textarea id="secondMessageInput" rows="4" placeholder="Ex: Perfeito! Posso te mandar os detalhes agora?"></textarea>
+        <button id="saveSecondMessageBtn" class="ghost">Salvar Segunda Mensagem</button>
       </article>
 
       <article class="card">
@@ -58,6 +80,7 @@
         <textarea id="leadsInput" rows="7" placeholder="Ana,5561999999999&#10;Carlos,5561988888888"></textarea>
         <div class="button-row">
           <button id="saveLeadsBtn">Salvar Leads</button>
+          <button id="clearLeadsBtn" class="ghost danger">Apagar Todos</button>
           <label class="upload-label" for="csvFileInput">Anexar lista CSV</label>
           <input id="csvFileInput" type="file" accept=".csv,text/csv" />
         </div>
@@ -73,6 +96,7 @@
               <th>Nome</th>
               <th>Número</th>
               <th>Status</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody id="leadsTableBody"></tbody>

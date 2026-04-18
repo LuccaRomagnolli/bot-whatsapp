@@ -12,6 +12,9 @@ let client = null;
 let connectPromise = null;
 let resolveConnect = null;
 let rejectConnect = null;
+let recoverPromise = null;
+const readySubscribers = new Set();
+const CONNECTED_WA_STATE = 'CONNECTED';
 
 const connection = {
     status: 'disconnected',
@@ -24,6 +27,22 @@ const connection = {
 
 function updateConnectionState(patch) {
     Object.assign(connection, patch, { updatedAt: new Date().toISOString() });
+}
+
+function notifyClientReady(instance) {
+    readySubscribers.forEach((handler) => {
+        try {
+            handler(instance);
+        } catch (error) {
+            logger.warn(`Falha ao notificar listener de cliente pronto: ${error.message}`);
+        }
+    });
+}
+
+function subscribeClientReady(handler) {
+    if (typeof handler !== 'function') return () => {};
+    readySubscribers.add(handler);
+    return () => readySubscribers.delete(handler);
 }
 
 function settleConnectSuccess(instance) {
@@ -48,6 +67,31 @@ function extractPhone(instance) {
     const serialized = instance && instance.info && instance.info.wid && instance.info.wid._serialized;
     if (!serialized) return '';
     return String(serialized).split('@')[0];
+}
+
+async function destroyClientInstance(instance, context = '') {
+    if (!instance) return;
+    try {
+        await instance.destroy();
+    } catch (error) {
+        const prefix = context ? `${context}: ` : '';
+        logger.warn(`${prefix}não foi possível destruir cliente ativo: ${error.message}`);
+    }
+}
+
+async function getInstanceState(instance) {
+    if (!instance || typeof instance.getState !== 'function') return '';
+    try {
+        const state = await instance.getState();
+        return String(state || '').toUpperCase();
+    } catch (_error) {
+        return '';
+    }
+}
+
+async function isInstanceConnected(instance) {
+    const state = await getInstanceState(instance);
+    return state === CONNECTED_WA_STATE;
 }
 
 function createClient() {
@@ -97,6 +141,7 @@ function createClient() {
             lastError: '',
             lastDisconnectReason: ''
         });
+        notifyClientReady(instance);
         settleConnectSuccess(instance);
     });
 
@@ -138,8 +183,25 @@ function createClient() {
 }
 
 function initializeClient() {
+    return initializeClientInternal();
+}
+
+async function initializeClientInternal() {
     if (client && connection.status === 'connected') {
-        return Promise.resolve(client);
+        const healthy = await isInstanceConnected(client);
+        if (healthy) return client;
+
+        logger.warn('Cliente estava conectado, mas ficou inconsistente. Reconectando sessão...');
+        const staleClient = client;
+        client = null;
+        updateConnectionState({
+            status: 'disconnected',
+            qrDataUrl: '',
+            phoneNumber: '',
+            lastError: '',
+            lastDisconnectReason: 'Sessão inconsistente detectada.'
+        });
+        await destroyClientInstance(staleClient, 'Reconexão');
     }
 
     if (connectPromise) {
@@ -147,12 +209,9 @@ function initializeClient() {
     }
 
     if (client && connection.status !== 'connected') {
-        try {
-            client.destroy().catch(() => null);
-        } catch (_error) {
-            // ignora cliente stale
-        }
+        const staleClient = client;
         client = null;
+        await destroyClientInstance(staleClient, 'Limpeza de cliente stale');
     }
 
     client = createClient();
@@ -209,6 +268,54 @@ function getConnectionStatus() {
     };
 }
 
+function getActiveClient() {
+    return client;
+}
+
+async function ensureConnectedClient(preferredClient = null) {
+    if (preferredClient) {
+        const preferredHealthy = await isInstanceConnected(preferredClient);
+        if (preferredHealthy) return preferredClient;
+    }
+
+    if (client) {
+        const activeHealthy = await isInstanceConnected(client);
+        if (activeHealthy) return client;
+    }
+
+    return initializeClientInternal();
+}
+
+async function recoverClient(reason = '') {
+    if (recoverPromise) return recoverPromise;
+
+    recoverPromise = (async () => {
+        const reasonText = String(reason || '').trim() || 'Recuperação automática da sessão.';
+        logger.warn(`Reconectando WhatsApp após falha transitória. Motivo: ${reasonText}`);
+
+        if (connectPromise) {
+            settleConnectError(new Error('Conexão reiniciada para recuperar a sessão.'));
+        }
+
+        const staleClient = client;
+        client = null;
+        updateConnectionState({
+            status: 'disconnected',
+            qrDataUrl: '',
+            phoneNumber: '',
+            lastError: '',
+            lastDisconnectReason: reasonText
+        });
+
+        await destroyClientInstance(staleClient, 'Recuperação');
+        return initializeClientInternal();
+    })().finally(() => {
+        recoverPromise = null;
+    });
+
+    return recoverPromise;
+}
+
 async function disconnectClient(options = {}) {
     const { removeSession = false } = options;
     const activeClient = client;
@@ -221,6 +328,7 @@ async function disconnectClient(options = {}) {
     connectPromise = null;
     resolveConnect = null;
     rejectConnect = null;
+    recoverPromise = null;
 
     if (activeClient) {
         if (removeSession) {
@@ -256,5 +364,9 @@ module.exports = {
     initializeClient,
     startClientConnection,
     getConnectionStatus,
-    disconnectClient
+    disconnectClient,
+    ensureConnectedClient,
+    recoverClient,
+    subscribeClientReady,
+    getActiveClient
 };

@@ -5,6 +5,7 @@ const { sendFirstMessage } = require('./messenger');
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
 const scheduledTasks = [];
+const MAX_BATCH_SLOTS = 12;
 
 // Algoritmo de Fisher-Yates para embaralhar o array
 function shuffleArray(array) {
@@ -26,6 +27,12 @@ function calculateBatchSize(config) {
         else if (day <= 7) targetSize = 15;
     }
     return targetSize;
+}
+
+function getBatchCount(config) {
+    const parsed = parseInt(config.BATCH_COUNT, 10);
+    if (!Number.isInteger(parsed)) return 4;
+    return Math.min(MAX_BATCH_SLOTS, Math.max(1, parsed));
 }
 
 async function processBatch(client, config) {
@@ -89,12 +96,11 @@ function startSchedulers(client, config) {
         return String(value).trim();
     };
 
-    const slots = [
-        getBatchEnv('BATCH_HOUR_1', '9'),
-        getBatchEnv('BATCH_HOUR_2', '11'),
-        getBatchEnv('BATCH_HOUR_3', '16'),
-        getBatchEnv('BATCH_HOUR_4', '17')
-    ];
+    const defaultSlots = ['9', '11', '16', '17'];
+    const batchCount = getBatchCount(config);
+    const slots = Array.from({ length: batchCount }, (_slot, index) =>
+        getBatchEnv(`BATCH_HOUR_${index + 1}`, defaultSlots[index] || '')
+    );
 
     slots.forEach((slot, index) => {
         if (!slot || !String(slot).trim()) return;

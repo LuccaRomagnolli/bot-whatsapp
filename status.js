@@ -3,18 +3,22 @@ const Table = require('cli-table3');
 const statusTracker = require('./src/statusTracker');
 
 function getNextBatchTime() {
+    const maxBatchSlots = 12;
+    const parsedBatchCount = parseInt(process.env.BATCH_COUNT, 10);
+    const batchCount = Number.isInteger(parsedBatchCount)
+        ? Math.min(maxBatchSlots, Math.max(1, parsedBatchCount))
+        : 4;
+
     const getBatchEnv = (key, fallback) => {
         const value = process.env[key];
         if (value === undefined) return fallback;
         return String(value).trim();
     };
 
-    const slots = [
-        getBatchEnv('BATCH_HOUR_1', '9'),
-        getBatchEnv('BATCH_HOUR_2', '11'),
-        getBatchEnv('BATCH_HOUR_3', '16'),
-        getBatchEnv('BATCH_HOUR_4', '17')
-    ]
+    const defaultSlots = ['9', '11', '16', '17'];
+    const slots = Array.from({ length: batchCount }, (_slot, index) =>
+        getBatchEnv(`BATCH_HOUR_${index + 1}`, defaultSlots[index] || '')
+    )
         .map((value) => String(value || '').trim())
         .filter(Boolean)
         .map((value) => {

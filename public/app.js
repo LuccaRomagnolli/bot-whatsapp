@@ -4,20 +4,67 @@ const leadsTableBody = document.getElementById('leadsTableBody');
 const feedback = document.getElementById('feedback');
 const leadsInput = document.getElementById('leadsInput');
 const csvFileInput = document.getElementById('csvFileInput');
+const secondMessageInput = document.getElementById('secondMessageInput');
+const batchSizeInput = document.getElementById('batchSizeInput');
+const batchCountInput = document.getElementById('batchCountInput');
+const dailyLimitInput = document.getElementById('dailyLimitInput');
+const replyDelayInput = document.getElementById('replyDelayInput');
+const scheduleGrid = document.getElementById('scheduleGrid');
 const waStatusText = document.getElementById('waStatusText');
 const waPhoneText = document.getElementById('waPhoneText');
 const waQrImage = document.getElementById('waQrImage');
 const waQrHint = document.getElementById('waQrHint');
-const scheduleInputs = [
-  document.getElementById('slot1'),
-  document.getElementById('slot2'),
-  document.getElementById('slot3'),
-  document.getElementById('slot4')
-];
+const MAX_BATCH_SLOTS = 12;
+let scheduleInputs = [];
+let localBatchCountOverride = null;
+let settingsDirty = false;
+let scheduleDirty = false;
 
 function setFeedback(message, isError = false) {
   feedback.textContent = message;
   feedback.style.color = isError ? '#dd6b7a' : '#b8c6d8';
+}
+
+function sanitizeTimeValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!match) return '';
+
+  const hour = Number(match[1]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return '';
+  return `${String(hour).padStart(2, '0')}:${match[2]}`;
+}
+
+function clampInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function ensureScheduleInputs(count) {
+  const safeCount = clampInt(count, 4, 1, MAX_BATCH_SLOTS);
+  if (scheduleInputs.length === safeCount) return;
+
+  const previousValues = scheduleInputs.map((input) => input.value || '');
+  scheduleGrid.innerHTML = '';
+  scheduleInputs = [];
+
+  for (let index = 0; index < safeCount; index += 1) {
+    const input = document.createElement('input');
+    input.type = 'time';
+    input.dataset.slot = String(index + 1);
+    input.title = `Horário do lote ${index + 1}`;
+    input.value = sanitizeTimeValue(previousValues[index] || '');
+    input.addEventListener('input', () => {
+      scheduleDirty = true;
+    });
+    input.addEventListener('change', () => {
+      scheduleDirty = true;
+    });
+    scheduleGrid.appendChild(input);
+    scheduleInputs.push(input);
+  }
 }
 
 async function api(path, options = {}) {
@@ -48,15 +95,35 @@ function renderStats(summary) {
     .map(([label, value]) => `<div class="stat"><label>${label}</label><strong>${value}</strong></div>`)
     .join('');
 
-  const slots = [
-    summary.schedule?.slot1 || '',
-    summary.schedule?.slot2 || '',
-    summary.schedule?.slot3 || '',
-    summary.schedule?.slot4 || ''
-  ];
-  scheduleInputs.forEach((input, index) => {
-    if (document.activeElement !== input) input.value = slots[index];
-  });
+  const config = summary.config || {};
+  const summaryBatchCount = clampInt(config.batchCount, 4, 1, MAX_BATCH_SLOTS);
+  const effectiveBatchCount = localBatchCountOverride ?? summaryBatchCount;
+
+  if (!settingsDirty) {
+    if (document.activeElement !== batchSizeInput) batchSizeInput.value = String(config.batchSize ?? 20);
+    if (document.activeElement !== batchCountInput) batchCountInput.value = String(summaryBatchCount);
+    if (document.activeElement !== dailyLimitInput) dailyLimitInput.value = String(config.dailyLimit ?? 80);
+    if (document.activeElement !== replyDelayInput) {
+      replyDelayInput.value = String(config.responseReplyDelaySeconds ?? 8);
+    }
+  } else if (localBatchCountOverride !== null && document.activeElement !== batchCountInput) {
+    batchCountInput.value = String(localBatchCountOverride);
+  }
+
+  ensureScheduleInputs(effectiveBatchCount);
+  if (!scheduleDirty) {
+    const slots = Array.isArray(summary.schedule?.slots) ? summary.schedule.slots : [];
+    scheduleInputs.forEach((input, index) => {
+      if (document.activeElement !== input) {
+        const safeValue = sanitizeTimeValue(slots[index]);
+        input.value = safeValue;
+      }
+    });
+  }
+
+  if (document.activeElement !== secondMessageInput) {
+    secondMessageInput.value = summary.config?.secondMessage || '';
+  }
 }
 
 function formatPhone(number) {
@@ -107,7 +174,7 @@ function renderWhatsApp(connection = {}) {
 
 function renderLeads(leads) {
   if (!leads.length) {
-    leadsTableBody.innerHTML = '<tr><td colspan="3">Nenhum lead cadastrado.</td></tr>';
+    leadsTableBody.innerHTML = '<tr><td colspan="4">Nenhum lead cadastrado.</td></tr>';
     return;
   }
   leadsTableBody.innerHTML = leads
@@ -116,6 +183,11 @@ function renderLeads(leads) {
         <td>${lead.primeiro_nome || '-'}</td>
         <td>${lead.numero || '-'}</td>
         <td><span class="tag ${lead.status}">${lead.status || 'pendente'}</span></td>
+        <td>
+          <button class="ghost danger table-action-btn delete-lead-btn" data-numero="${lead.numero || ''}">
+            Apagar
+          </button>
+        </td>
       </tr>
     `)
     .join('');
@@ -151,6 +223,42 @@ document.getElementById('resetWaBtn').addEventListener('click', async () => {
   if (!confirmReset) return;
   await postAction('/api/whatsapp/reset', 'Número removido com sucesso.');
 });
+batchCountInput.addEventListener('input', () => {
+  settingsDirty = true;
+  scheduleDirty = true;
+  localBatchCountOverride = clampInt(batchCountInput.value, 4, 1, MAX_BATCH_SLOTS);
+  ensureScheduleInputs(localBatchCountOverride);
+});
+batchSizeInput.addEventListener('input', () => {
+  settingsDirty = true;
+});
+dailyLimitInput.addEventListener('input', () => {
+  settingsDirty = true;
+});
+replyDelayInput.addEventListener('input', () => {
+  settingsDirty = true;
+});
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  try {
+    const payload = {
+      batchSize: clampInt(batchSizeInput.value, 20, 1, 1000),
+      batchCount: clampInt(batchCountInput.value, 4, 1, MAX_BATCH_SLOTS),
+      dailyLimit: clampInt(dailyLimitInput.value, 80, 1, 100000),
+      responseReplyDelaySeconds: clampInt(replyDelayInput.value, 8, 0, 3600)
+    };
+
+    const result = await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    settingsDirty = false;
+    localBatchCountOverride = null;
+    setFeedback(result.message || 'Configurações salvas com sucesso.');
+    await refresh();
+  } catch (error) {
+    setFeedback(error.message, true);
+  }
+});
 document.getElementById('saveScheduleBtn').addEventListener('click', async () => {
   const slots = scheduleInputs.map((input) => input.value || '');
   try {
@@ -158,7 +266,22 @@ document.getElementById('saveScheduleBtn').addEventListener('click', async () =>
       method: 'POST',
       body: JSON.stringify({ slots })
     });
+    scheduleDirty = false;
     setFeedback(result.message || 'Horários salvos com sucesso.');
+    await refresh();
+  } catch (error) {
+    setFeedback(error.message, true);
+  }
+});
+
+document.getElementById('saveSecondMessageBtn').addEventListener('click', async () => {
+  try {
+    const result = await api('/api/second-message', {
+      method: 'POST',
+      body: JSON.stringify({ secondMessage: secondMessageInput.value || '' })
+    });
+    secondMessageInput.value = result.secondMessage || secondMessageInput.value;
+    setFeedback(result.message || 'Segunda mensagem salva com sucesso.');
     await refresh();
   } catch (error) {
     setFeedback(error.message, true);
@@ -188,6 +311,41 @@ document.getElementById('saveLeadsBtn').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('clearLeadsBtn').addEventListener('click', async () => {
+  const confirmClear = window.confirm('Tem certeza que deseja apagar todos os leads?');
+  if (!confirmClear) return;
+
+  try {
+    const result = await api('/api/leads', { method: 'DELETE' });
+    setFeedback(result.message || 'Leads removidos com sucesso.');
+    await refresh();
+  } catch (error) {
+    setFeedback(error.message, true);
+  }
+});
+
+leadsTableBody.addEventListener('click', async (event) => {
+  const button = event.target.closest('.delete-lead-btn');
+  if (!button) return;
+
+  const numero = button.dataset.numero || '';
+  if (!numero) {
+    setFeedback('Número do lead inválido para remoção.', true);
+    return;
+  }
+
+  const confirmDelete = window.confirm(`Apagar lead ${numero}?`);
+  if (!confirmDelete) return;
+
+  try {
+    const result = await api(`/api/leads/${encodeURIComponent(numero)}`, { method: 'DELETE' });
+    setFeedback(result.message || 'Lead removido com sucesso.');
+    await refresh();
+  } catch (error) {
+    setFeedback(error.message, true);
+  }
+});
+
 csvFileInput.addEventListener('change', async (event) => {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
@@ -206,5 +364,6 @@ csvFileInput.addEventListener('change', async (event) => {
   }
 });
 
+ensureScheduleInputs(4);
 refresh();
 setInterval(refresh, 8000);

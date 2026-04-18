@@ -1,7 +1,16 @@
 const logger = require('./logger');
 const statusTracker = require('./statusTracker');
+const { ensureConnectedClient, recoverClient } = require('./client');
 
 const delay = ms => new Promise(res => setTimeout(res, ms));
+const TRANSIENT_ERROR_PATTERNS = [
+    /detached frame/i,
+    /execution context was destroyed/i,
+    /target closed/i,
+    /session closed/i,
+    /context destroyed/i,
+    /cannot find context with specified id/i
+];
 
 function getRandomTemplate(nome) {
     const templates = [
@@ -23,37 +32,73 @@ function getRandomTemplate(nome) {
 
 async function sendMessageWithTyping(client, numero, texto) {
     const chatId = `${numero}@c.us`;
-    
-    try {
-        const numberId = await client.getNumberId(numero);
-        if (!numberId) {
-            logger.warn(`Número inválido ou inexistente no WhatsApp: ${numero}`);
-            return false;
-        }
-        const targetChatId = numberId._serialized || chatId;
+    let activeClient = null;
 
-        await delay(1000); // Pausa breve antes de digitar
-
-        const chat = await client.getChatById(targetChatId).catch(() => null);
-        if (chat) {
-            await chat.sendSeen().catch(() => null);
-            await chat.sendStateTyping().catch(() => null);
-        }
-        
-        // Simular digitação: ~50ms por caractere ±20%
-        const baseTime = texto.length * 50;
-        const variance = baseTime * 0.2;
-        const typingTime = baseTime + (Math.random() * variance * 2 - variance);
-        
-        await delay(typingTime);
-        if (chat) await chat.clearState().catch(() => null);
-        
-        await client.sendMessage(targetChatId, texto);
-        return true;
-    } catch (error) {
-        logger.error(`Erro ao enviar mensagem para ${numero}: ${error.message}`);
+    const normalizedText = String(texto || '').trim();
+    if (!normalizedText) {
+        logger.warn(`Mensagem vazia para ${numero}. Envio cancelado.`);
         return false;
     }
+
+    try {
+        activeClient = await ensureConnectedClient(client);
+    } catch (error) {
+        logger.error(`Não foi possível garantir conexão ativa para ${numero}: ${error.message}`);
+        return false;
+    }
+
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        let chat = null;
+        try {
+            const numberId = await activeClient.getNumberId(numero);
+            if (!numberId) {
+                logger.warn(`Número inválido ou inexistente no WhatsApp: ${numero}`);
+                return false;
+            }
+            const targetChatId = numberId._serialized || chatId;
+
+            await delay(1000); // Pausa breve antes de digitar
+
+            chat = await activeClient.getChatById(targetChatId).catch(() => null);
+            if (chat) {
+                await chat.sendSeen().catch(() => null);
+                await chat.sendStateTyping().catch(() => null);
+            }
+
+            // Simular digitação: ~50ms por caractere ±20%
+            const baseTime = normalizedText.length * 50;
+            const variance = baseTime * 0.2;
+            const typingTime = baseTime + (Math.random() * variance * 2 - variance);
+
+            await delay(typingTime);
+            if (chat) await chat.clearState().catch(() => null);
+
+            await activeClient.sendMessage(targetChatId, normalizedText);
+            return true;
+        } catch (error) {
+            if (chat) await chat.clearState().catch(() => null);
+
+            const isTransient = TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(String(error.message || '')));
+            if (isTransient && attempt < maxAttempts) {
+                const retryDelay = 1200 * attempt;
+                logger.warn(`Falha transitória ao enviar para ${numero} (tentativa ${attempt}/${maxAttempts}): ${error.message}. Retentando em ${retryDelay}ms...`);
+                try {
+                    activeClient = await recoverClient(`Erro de envio para ${numero}: ${error.message}`);
+                } catch (recoverError) {
+                    logger.error(`Falha ao recuperar sessão antes do reenvio para ${numero}: ${recoverError.message}`);
+                    return false;
+                }
+                await delay(retryDelay);
+                continue;
+            }
+
+            logger.error(`Erro ao enviar mensagem para ${numero}: ${error.message}`);
+            return false;
+        }
+    }
+
+    return false;
 }
 
 async function sendFirstMessage(client, lead) {
