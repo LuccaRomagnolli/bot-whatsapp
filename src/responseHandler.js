@@ -2,13 +2,16 @@ const logger = require('./logger');
 const statusTracker = require('./statusTracker');
 const { sendSecondMessage } = require('./messenger');
 const pendingSecondMessages = new Set();
+const processedIncomingMessageIds = new Map();
+const PROCESSED_MESSAGE_TTL_MS = 120000;
 
 function onlyDigits(value) {
     return String(value || '').replace(/\D/g, '');
 }
 
 function extractMessageUser(jid) {
-    return String(jid || '').split('@')[0] || '';
+    const userPart = String(jid || '').split('@')[0] || '';
+    return userPart.split(':')[0] || '';
 }
 
 function getSerializedJid(jid) {
@@ -49,6 +52,84 @@ function shouldIgnoreIncomingJid(jid) {
 
 function getSecondMessageKey(prefix, numero) {
     return `${prefix}:${onlyDigits(numero)}`;
+}
+
+function getPhoneVariants(value) {
+    const digits = onlyDigits(value);
+    if (!digits) return [];
+
+    const variants = new Set([digits]);
+    const withCountryCode = digits.startsWith('55') ? digits : '';
+    const withoutCountryCode = withCountryCode ? digits.slice(2) : digits;
+
+    // Also compare with and without country code.
+    if (withCountryCode) {
+        variants.add(withoutCountryCode);
+    } else if (withoutCountryCode.length >= 10 && withoutCountryCode.length <= 11) {
+        variants.add(`55${withoutCountryCode}`);
+    }
+
+    // Normalize BR mobile numbers where WhatsApp may omit/include the extra 9 after DDD.
+    if (withCountryCode) {
+        if (withCountryCode.length === 13 && withCountryCode[4] === '9') {
+            variants.add(`${withCountryCode.slice(0, 4)}${withCountryCode.slice(5)}`);
+        }
+        if (withCountryCode.length === 12) {
+            variants.add(`${withCountryCode.slice(0, 4)}9${withCountryCode.slice(4)}`);
+        }
+    } else {
+        if (withoutCountryCode.length === 11 && withoutCountryCode[2] === '9') {
+            variants.add(`${withoutCountryCode.slice(0, 2)}${withoutCountryCode.slice(3)}`);
+        }
+        if (withoutCountryCode.length === 10) {
+            variants.add(`${withoutCountryCode.slice(0, 2)}9${withoutCountryCode.slice(2)}`);
+        }
+    }
+
+    return [...variants].filter(Boolean);
+}
+
+function isPhoneCompatible(a, b) {
+    const variantsA = getPhoneVariants(a);
+    const variantsB = getPhoneVariants(b);
+    if (!variantsA.length || !variantsB.length) return false;
+
+    for (const valueA of variantsA) {
+        for (const valueB of variantsB) {
+            if (valueA === valueB || valueA.endsWith(valueB) || valueB.endsWith(valueA)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function getMessageId(msg) {
+    if (!msg || !msg.id) return '';
+    if (typeof msg.id === 'string') return msg.id;
+    if (msg.id && typeof msg.id === 'object') {
+        if (msg.id._serialized) return String(msg.id._serialized);
+        if (msg.id.id) return String(msg.id.id);
+    }
+    return '';
+}
+
+function shouldSkipProcessedMessage(msg) {
+    const messageId = getMessageId(msg);
+    if (!messageId) return false;
+
+    const now = Date.now();
+    const seenAt = processedIncomingMessageIds.get(messageId);
+    if (seenAt && now - seenAt < PROCESSED_MESSAGE_TTL_MS) return true;
+
+    processedIncomingMessageIds.set(messageId, now);
+    for (const [id, timestamp] of processedIncomingMessageIds.entries()) {
+        if (now - timestamp >= PROCESSED_MESSAGE_TTL_MS) {
+            processedIncomingMessageIds.delete(id);
+        }
+    }
+    return false;
 }
 
 function collectLeadCandidates(msg, contact) {
@@ -127,7 +208,7 @@ async function resolvePhoneDigitsFromJids(client, jids) {
 }
 
 function resolveLeadFromCandidates(candidates) {
-    const uniqueCandidates = [...new Set(candidates.map(onlyDigits).filter(Boolean))];
+    const uniqueCandidates = [...new Set(candidates.flatMap(getPhoneVariants).filter(Boolean))];
     if (!uniqueCandidates.length) return null;
 
     for (const candidate of uniqueCandidates) {
@@ -138,8 +219,7 @@ function resolveLeadFromCandidates(candidates) {
     const sentLeads = statusTracker.getAllLeads().filter((lead) => lead.status === 'enviado' && !lead.segundaMensagemEnviada);
     for (const candidate of uniqueCandidates) {
         const compatible = sentLeads.filter((lead) => {
-            const leadNumber = onlyDigits(lead.numero);
-            return leadNumber.endsWith(candidate) || candidate.endsWith(leadNumber);
+            return isPhoneCompatible(lead.numero, candidate);
         });
         if (compatible.length === 1) {
             return { lead: compatible[0], matchedBy: `approx:${candidate}` };
@@ -207,52 +287,63 @@ async function triggerSelfTestSecondMessage(client, config, msg) {
     enqueueSecondMessage(client, config, testLead, selfTestKey, 'Self-test');
 }
 
+async function handleIncomingLeadMessage(client, config, msg, sourceEvent = 'message') {
+    const fromJid = getSerializedJid(msg && msg.from);
+    if (shouldIgnoreIncomingJid(fromJid)) return;
+    if (msg.fromMe) return;
+    if (shouldSkipProcessedMessage(msg)) return;
+
+    const contact = await msg.getContact().catch(() => null);
+    let candidates = collectLeadCandidates(msg, contact);
+
+    let resolved = resolveLeadFromCandidates(candidates);
+    if (!resolved || !resolved.lead) {
+        candidates = await enrichCandidatesWithLidMapping(client, candidates, msg);
+        resolved = resolveLeadFromCandidates(candidates);
+    }
+
+    if (!resolved || !resolved.lead) {
+        logger.info(`Mensagem recebida sem lead correspondente (event=${sourceEvent}, from=${msg.from || '-'}, candidates=${candidates.filter(Boolean).join('|') || '-'})`);
+        return;
+    }
+
+    const { lead, matchedBy } = resolved;
+    const leadNumber = onlyDigits(lead.numero);
+    if (!leadNumber) {
+        logger.warn(`Lead encontrado sem número válido. Ignorando resposta (matchedBy=${matchedBy}).`);
+        return;
+    }
+
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const isEligible = lead.status === 'enviado' && !lead.segundaMensagemEnviada;
+    if (!isEligible) {
+        logger.info(`Lead ${lead.primeiro_nome} (${lead.numero}) encontrado, mas não elegível para 2ª mensagem (status=${lead.status || '-'}, segundaMensagemEnviada=${Boolean(lead.segundaMensagemEnviada)}).`);
+        return;
+    }
+
+    logger.info(`📩 Resposta recebida de ${lead.primeiro_nome} às ${timeStr} (${matchedBy}, event=${sourceEvent})`);
+
+    const queueKey = getSecondMessageKey('lead', leadNumber);
+    enqueueSecondMessage(client, config, lead, queueKey, 'Lead');
+}
+
 function setupResponseHandler(client, config) {
     client.on('message', async msg => {
         try {
-            const fromJid = getSerializedJid(msg.from);
-            if (shouldIgnoreIncomingJid(fromJid)) return;
-            if (msg.fromMe) return;
-
-            const contact = await msg.getContact().catch(() => null);
-            let candidates = collectLeadCandidates(msg, contact);
-
-            let resolved = resolveLeadFromCandidates(candidates);
-            if (!resolved || !resolved.lead) {
-                candidates = await enrichCandidatesWithLidMapping(client, candidates, msg);
-                resolved = resolveLeadFromCandidates(candidates);
-            }
-
-            if (!resolved || !resolved.lead) {
-                logger.info(`Mensagem recebida sem lead correspondente (from=${msg.from || '-'}, candidates=${candidates.filter(Boolean).join('|') || '-'})`);
-                return;
-            }
-
-            const { lead, matchedBy } = resolved;
-            const leadNumber = onlyDigits(lead.numero);
-            if (!leadNumber) {
-                logger.warn(`Lead encontrado sem número válido. Ignorando resposta (matchedBy=${matchedBy}).`);
-                return;
-            }
-
-            const now = new Date();
-            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-            const isEligible = lead.status === 'enviado' && !lead.segundaMensagemEnviada;
-            if (!isEligible) {
-                logger.info(`Lead ${lead.primeiro_nome} (${lead.numero}) encontrado, mas não elegível para 2ª mensagem (status=${lead.status || '-'}, segundaMensagemEnviada=${Boolean(lead.segundaMensagemEnviada)}).`);
-                return;
-            }
-
-            logger.info(`📩 Resposta recebida de ${lead.primeiro_nome} às ${timeStr} (${matchedBy})`);
-
-            const queueKey = getSecondMessageKey('lead', leadNumber);
-            enqueueSecondMessage(client, config, lead, queueKey, 'Lead');
+            await handleIncomingLeadMessage(client, config, msg, 'message');
         } catch (error) {
             logger.error(`Erro no listener de mensagens: ${error.message}`);
         }
     });
 
     client.on('message_create', async msg => {
+        try {
+            await handleIncomingLeadMessage(client, config, msg, 'message_create');
+        } catch (error) {
+            logger.error(`Erro no listener de mensagens (message_create): ${error.message}`);
+        }
+
         try {
             await triggerSelfTestSecondMessage(client, config, msg);
         } catch (error) {
