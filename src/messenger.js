@@ -12,21 +12,34 @@ const TRANSIENT_ERROR_PATTERNS = [
     /cannot find context with specified id/i
 ];
 
+function pickRandom(items) {
+    return items[Math.floor(Math.random() * items.length)];
+}
+
 function getRandomTemplate(nome) {
     const templates = [
         `Olá, falo com ${nome}?`,
         `Oi! Estou falando com ${nome}?`,
         `Olá ${nome}, tudo bem?`
     ];
-    const emojis = ['😊', '🙂', '👋', '✅'];
-    
-    let msg = templates[Math.floor(Math.random() * templates.length)];
-    
-    // 30% de chance de adicionar emoji
-    if (Math.random() <= 0.3) {
-        msg += ' ' + emojis[Math.floor(Math.random() * emojis.length)];
+
+    const startEmojis = ['👋', '✨', '🤝', '😊', '🙂'];
+    const endEmojis = ['😊', '🙂', '😉', '✅', '💬', '👍'];
+
+    let msg = pickRandom(templates);
+
+    // 35% de chance de emoji no inicio da mensagem
+    if (Math.random() <= 0.35) {
+        msg = `${pickRandom(startEmojis)} ${msg}`;
     }
-    
+
+    // 70% de chance de emoji(s) no fim (sendo 25% chance de virem dois)
+    if (Math.random() <= 0.7) {
+        const firstEmoji = pickRandom(endEmojis);
+        const secondEmoji = Math.random() <= 0.25 ? ` ${pickRandom(endEmojis)}` : '';
+        msg += ` ${firstEmoji}${secondEmoji}`;
+    }
+
     return msg;
 }
 
